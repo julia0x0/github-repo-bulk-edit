@@ -1,0 +1,17 @@
+# Local edit plans
+.github-repo-bulk-edit-plan.json
+.github-repo-bulk-edit-plan.json.tmp
+
+# Python cache and tooling output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# Virtual environments and build output
+.venv/
+build/
+dist/
+*.egg-info/
