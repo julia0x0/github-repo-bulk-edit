@@ -1,6 +1,9 @@
 # Local edit plans
 .github-repo-bulk-edit-plan.json
 .github-repo-bulk-edit-plan.json.tmp
+.github-repo-bulk-edit-cache.json
+.github-repo-bulk-edit-cache.json.tmp
+.env
 
 # Python cache and tooling output
 __pycache__/

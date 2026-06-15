@@ -75,6 +75,38 @@ class RepoEditTests(unittest.TestCase):
             },
         )
 
+    def test_delete_mark_is_changed_and_dominates_patch(self) -> None:
+        edit = RepoEdit(repo())
+        edit.start_name_insert()
+        edit.set_name("new-name")
+
+        edit.toggle_delete()
+
+        self.assertTrue(edit.changed)
+        self.assertTrue(edit.delete_active)
+        self.assertEqual(edit.patch(), {})
+        self.assertEqual(edit.summary(), "delete octocat/hello-world")
+
+    def test_repository_from_api_reads_display_metadata(self) -> None:
+        parsed = Repository.from_api(
+            {
+                "id": 1,
+                "owner": {"login": "octocat"},
+                "name": "hello-world",
+                "private": False,
+                "archived": False,
+                "html_url": "https://github.com/octocat/hello-world",
+                "visibility": "public",
+                "created_at": "2020-01-02T03:04:05Z",
+                "updated_at": "2024-05-06T07:08:09Z",
+                "language": "Python",
+            }
+        )
+
+        self.assertEqual(parsed.created_at, "2020-01-02T03:04:05Z")
+        self.assertEqual(parsed.updated_at, "2024-05-06T07:08:09Z")
+        self.assertEqual(parsed.language, "Python")
+
 
 if __name__ == "__main__":
     unittest.main()

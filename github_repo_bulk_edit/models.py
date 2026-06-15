@@ -5,6 +5,12 @@ from typing import Any
 
 
 @dataclass(slots=True)
+class LanguageBreakdown:
+    name: str
+    chars: int
+
+
+@dataclass(slots=True)
 class Repository:
     id: int
     owner: str
@@ -13,6 +19,13 @@ class Repository:
     archived: bool
     html_url: str
     visibility: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+    language: str = ""
+    languages: tuple[LanguageBreakdown, ...] = ()
+    commit_count_label: str = ""
+    metadata_error: str = ""
+    metadata_commit_pages: int | None = None
 
     @property
     def full_name(self) -> str:
@@ -29,6 +42,9 @@ class Repository:
             archived=bool(data.get("archived", False)),
             html_url=str(data.get("html_url", "")),
             visibility=str(data.get("visibility") or ("private" if data.get("private") else "public")),
+            created_at=str(data.get("created_at") or ""),
+            updated_at=str(data.get("updated_at") or ""),
+            language=str(data.get("language") or ""),
         )
 
 
@@ -41,11 +57,12 @@ class RepoEdit:
     private_draft: bool | None = None
     archived_active: bool = False
     archived_draft: bool | None = None
+    delete_active: bool = False
 
-    def start_name_insert(self) -> str:
+    def start_name_insert(self, initial: str | None = None) -> str:
         """Activate name editing with the original name as the default buffer."""
         self.name_active = True
-        self.name_draft = self.repo.name
+        self.name_draft = self.repo.name if initial is None else initial
         return self.name_draft
 
     def set_name(self, name: str) -> None:
@@ -79,6 +96,9 @@ class RepoEdit:
         self.archived_draft = next_value
         self.archived_active = next_value != self.repo.archived
 
+    def toggle_delete(self) -> None:
+        self.delete_active = not self.delete_active
+
     def reset(self) -> None:
         self.name_active = False
         self.name_draft = None
@@ -86,6 +106,7 @@ class RepoEdit:
         self.private_draft = None
         self.archived_active = False
         self.archived_draft = None
+        self.delete_active = False
 
     @property
     def effective_name(self) -> str:
@@ -107,9 +128,11 @@ class RepoEdit:
 
     @property
     def changed(self) -> bool:
-        return bool(self.patch())
+        return self.delete_active or bool(self.patch())
 
     def patch(self) -> dict[str, Any]:
+        if self.delete_active:
+            return {}
         patch: dict[str, Any] = {}
         if self.name_active and self.name_draft and self.name_draft != self.repo.name:
             patch["name"] = self.name_draft
@@ -124,6 +147,8 @@ class RepoEdit:
         return patch
 
     def summary(self) -> str:
+        if self.delete_active:
+            return f"delete {self.repo.full_name}"
         changes: list[str] = []
         patch = self.patch()
         if "name" in patch:

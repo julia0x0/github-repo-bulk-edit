@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
-from .models import Repository
+from .config import DEFAULT_DOTENV_FILE, get_github_token
+from .models import LanguageBreakdown, Repository
 
 DEFAULT_API_URL = "https://api.github.com"
 DEFAULT_API_VERSION = "2022-11-28"
+DEFAULT_METADATA_WORKERS = 16
 
 
 class GitHubError(RuntimeError):
@@ -25,10 +28,15 @@ class GitHubClient:
     api_version: str = DEFAULT_API_VERSION
 
     @classmethod
-    def from_env(cls, api_url: str = DEFAULT_API_URL, api_version: str | None = None) -> "GitHubClient":
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    def from_env(
+        cls,
+        api_url: str = DEFAULT_API_URL,
+        api_version: str | None = None,
+        dotenv_path: str | os.PathLike[str] = DEFAULT_DOTENV_FILE,
+    ) -> "GitHubClient":
+        token = get_github_token(dotenv_path)
         if not token:
-            raise GitHubError("Set GITHUB_TOKEN or GH_TOKEN before running the tool.")
+            raise GitHubError("Set GITHUB_TOKEN or GH_TOKEN in your environment or .env before running the tool.")
         return cls(token=token, api_url=api_url, api_version=api_version or DEFAULT_API_VERSION)
 
     def list_repositories(
@@ -39,6 +47,7 @@ class GitHubClient:
         sort: str = "full_name",
         owner: str | None = None,
         limit: int | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> list[Repository]:
         params = {
             "affiliation": affiliation,
@@ -59,7 +68,11 @@ class GitHubClient:
                     continue
                 repos.append(repo)
                 if limit is not None and len(repos) >= limit:
+                    if progress is not None:
+                        progress(len(repos), page)
                     return repos
+            if progress is not None:
+                progress(len(repos), page)
             if len(data) < 100:
                 return repos
             page += 1
@@ -70,6 +83,87 @@ class GitHubClient:
         owner = quote(repo.owner, safe="")
         name = quote(repo.name, safe="")
         return self.request("PATCH", f"/repos/{owner}/{name}", body=patch)
+
+    def delete_repository(self, repo: Repository) -> None:
+        owner = quote(repo.owner, safe="")
+        name = quote(repo.name, safe="")
+        self.request("DELETE", f"/repos/{owner}/{name}")
+
+    def enrich_repository_metadata(
+        self,
+        repos: list[Repository],
+        *,
+        commit_pages: int = 2,
+        workers: int = DEFAULT_METADATA_WORKERS,
+        progress: Callable[[int, int, Repository], None] | None = None,
+    ) -> None:
+        total = len(repos)
+        if total == 0:
+            return
+        worker_count = max(1, min(workers, total))
+        if worker_count == 1:
+            for index, repo in enumerate(repos, start=1):
+                self._enrich_one_repository(repo, commit_pages=commit_pages)
+                if progress is not None:
+                    progress(index, total, repo)
+            return
+
+        completed = 0
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(self._enrich_one_repository, repo, commit_pages=commit_pages): repo for repo in repos
+            }
+            for future in as_completed(futures):
+                repo = futures[future]
+                future.result()
+                completed += 1
+                if progress is not None:
+                    progress(completed, total, repo)
+
+    def _enrich_one_repository(self, repo: Repository, *, commit_pages: int) -> None:
+        errors: list[str] = []
+        try:
+            repo.languages = self.repository_languages(repo)
+        except GitHubError as exc:
+            errors.append(f"languages unavailable: {exc}")
+        try:
+            repo.commit_count_label = self.bounded_commit_count_label(repo, pages=commit_pages)
+        except GitHubError as exc:
+            errors.append(f"commits unavailable: {exc}")
+        repo.metadata_error = "; ".join(errors)
+        repo.metadata_commit_pages = commit_pages
+
+    def repository_languages(self, repo: Repository) -> tuple[LanguageBreakdown, ...]:
+        owner = quote(repo.owner, safe="")
+        name = quote(repo.name, safe="")
+        data = self.request("GET", f"/repos/{owner}/{name}/languages")
+        if not isinstance(data, dict):
+            raise GitHubError("GitHub returned an unexpected languages response.")
+        languages = [
+            LanguageBreakdown(name=str(language), chars=int(chars))
+            for language, chars in data.items()
+            if isinstance(chars, int) and chars > 0
+        ]
+        return tuple(sorted(languages, key=lambda language: language.chars, reverse=True))
+
+    def bounded_commit_count_label(self, repo: Repository, *, pages: int = 2, per_page: int = 100) -> str:
+        if pages <= 0:
+            return ""
+        owner = quote(repo.owner, safe="")
+        name = quote(repo.name, safe="")
+        total = 0
+        for page in range(1, pages + 1):
+            data = self.request(
+                "GET",
+                f"/repos/{owner}/{name}/commits",
+                params={"per_page": str(per_page), "page": str(page)},
+            )
+            if not isinstance(data, list):
+                raise GitHubError("GitHub returned an unexpected commits response.")
+            total += len(data)
+            if len(data) < per_page:
+                return str(total)
+        return f"{total}+"
 
     def request(
         self,

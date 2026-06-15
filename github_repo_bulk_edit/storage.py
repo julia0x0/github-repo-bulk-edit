@@ -77,6 +77,7 @@ def plan_signature(edits: list[RepoEdit]) -> str:
         entry = _entry_from_edit(edit)
         if entry is not None:
             entries.append(entry)
+    entries.sort(key=lambda entry: (entry.get("id", 0), entry.get("owner", ""), entry.get("name", "")))
     return json.dumps(entries, sort_keys=True, separators=(",", ":"))
 
 
@@ -86,6 +87,7 @@ def _entry_from_edit(edit: RepoEdit) -> dict[str, Any] | None:
             edit.name_draft is not None,
             edit.private_draft is not None,
             edit.archived_draft is not None,
+            edit.delete_active,
         )
     )
     if not has_state and not edit.changed:
@@ -100,6 +102,7 @@ def _entry_from_edit(edit: RepoEdit) -> dict[str, Any] | None:
         "private_draft": edit.private_draft,
         "archived_active": edit.archived_active,
         "archived_draft": edit.archived_draft,
+        "delete_active": edit.delete_active,
         "patch": edit.patch(),
     }
 
@@ -128,6 +131,7 @@ def _apply_entry(edit: RepoEdit, entry: dict[str, Any]) -> None:
     archived_draft = entry.get("archived_draft")
     edit.archived_draft = archived_draft if isinstance(archived_draft, bool) else None
     edit.archived_active = bool(entry.get("archived_active")) and edit.archived_draft != edit.repo.archived
+    edit.delete_active = bool(entry.get("delete_active"))
 
 
 def _optional_str(value: Any) -> str | None:

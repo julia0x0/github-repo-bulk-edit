@@ -64,6 +64,28 @@ class StorageTests(unittest.TestCase):
 
         self.assertNotEqual(clean, plan_signature([edit]))
 
+    def test_plan_signature_is_independent_of_display_order(self) -> None:
+        first = RepoEdit(repo(1, "first"))
+        first.toggle_private()
+        second = RepoEdit(repo(2, "second"))
+        second.toggle_archived()
+
+        self.assertEqual(plan_signature([first, second]), plan_signature([second, first]))
+
+    def test_delete_mark_is_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plan.json"
+            edit = RepoEdit(repo())
+            edit.toggle_delete()
+
+            saved = save_plan(path, [edit])
+
+            self.assertEqual(saved, 1)
+            loaded_edit = RepoEdit(repo())
+            load_plan(path, [loaded_edit])
+            self.assertTrue(loaded_edit.delete_active)
+            self.assertTrue(loaded_edit.changed)
+
     def test_malformed_plan_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "plan.json"
